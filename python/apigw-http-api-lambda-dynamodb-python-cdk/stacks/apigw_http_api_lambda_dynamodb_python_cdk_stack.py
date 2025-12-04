@@ -9,6 +9,7 @@ from aws_cdk import (
     aws_apigateway as apigw_,
     aws_ec2 as ec2,
     aws_iam as iam,
+    aws_cloudwatch as cloudwatch_,
     Duration,
 )
 from constructs import Construct
@@ -81,6 +82,7 @@ class ApigwHttpApiLambdaDynamodbPythonCdkStack(Stack):
             ),
             memory_size=1024,
             timeout=Duration.minutes(5),
+            tracing=lambda_.Tracing.ACTIVE,
         )
 
         # grant permission to lambda to write to demo table
@@ -88,8 +90,40 @@ class ApigwHttpApiLambdaDynamodbPythonCdkStack(Stack):
         api_hanlder.add_environment("TABLE_NAME", demo_table.table_name)
 
         # Create API Gateway
-        apigw_.LambdaRestApi(
+        api = apigw_.LambdaRestApi(
             self,
             "Endpoint",
             handler=api_hanlder,
+            deploy_options=apigw_.StageOptions(
+                tracing_enabled=True
+            ),
+        )
+
+        # CloudWatch Alarms
+        lambda_error_alarm = cloudwatch_.Alarm(
+            self,
+            "LambdaErrorAlarm",
+            metric=api_hanlder.metric_errors(),
+            threshold=1,
+            evaluation_periods=1,
+            alarm_description="Alert when Lambda function errors occur",
+        )
+
+        api_error_metric = cloudwatch_.Metric(
+            namespace="AWS/ApiGateway",
+            metric_name="5XXError",
+            dimensions_map={
+                "ApiName": api.rest_api_name,
+            },
+            statistic="Sum",
+            period=Duration.minutes(1),
+        )
+
+        api_error_alarm = cloudwatch_.Alarm(
+            self,
+            "ApiGateway5XXAlarm",
+            metric=api_error_metric,
+            threshold=1,
+            evaluation_periods=1,
+            alarm_description="Alert when API Gateway returns 5XX errors",
         )
